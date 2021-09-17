@@ -29,8 +29,17 @@ import Network
 @available(macOS 10.14, iOS 12.0, watchOS 5.0, tvOS 12.0, *)
 public class WebSocketServer: Server, ConnectionDelegate {
     public var onEvent: ((ServerEvent) -> Void)?
-    private var connections = [String: ServerConnection]()
-    private var listener: NWListener?
+    public var connections = [String: ServerConnection]()
+    public var listener: NWListener?
+    //socket服务是否正常建立
+    final public var isRuning: Bool {
+        return listener?.state == .ready
+    }
+    final public func write2AllConns(data: Data, opcode: FrameOpCode) -> Void {
+        connections.forEach { (_, conn) in
+            conn.write(data: data, opcode: opcode)
+        }
+    }
     private let queue = DispatchQueue(label: "com.vluxe.starscream.server.networkstream", attributes: [])
     
     public init() {
@@ -52,22 +61,22 @@ public class WebSocketServer: Server, ConnectionDelegate {
             c.delegate = self
             self?.connections[c.uuid] = c
         }
-//        listener.stateUpdateHandler = { state in
-//            switch state {
-//            case .ready:
-//                print("ready to get sockets!")
-//            case .setup:
-//                print("setup to get sockets!")
-//            case .cancelled:
-//                print("server cancelled!")
-//            case .waiting(let error):
-//                print("waiting error: \(error)")
-//            case .failed(let error):
-//                print("server failed: \(error)")
-//            @unknown default:
-//                print("wat?")
-//            }
-//        }
+        listener.stateUpdateHandler = { state in
+            switch state {
+            case .ready:
+                print("ready to get sockets!")
+            case .setup:
+                print("setup to get sockets!")
+            case .cancelled:
+                print("server cancelled!")
+            case .waiting(let error):
+                print("waiting error: \(error)")
+            case .failed(let error):
+                print("server failed: \(error)")
+            @unknown default:
+                print("wat?")
+            }
+        }
         self.listener = listener
         listener.start(queue: queue)
         return nil
@@ -88,8 +97,8 @@ public class WebSocketServer: Server, ConnectionDelegate {
 }
 
 @available(macOS 10.14, iOS 12.0, watchOS 5.0, tvOS 12.0, *)
-public class ServerConnection: Connection, HTTPServerDelegate, FramerEventClient, FrameCollectorDelegate, TransportEventClient {
-    let transport: TCPTransport
+open class ServerConnection: Connection, HTTPServerDelegate, FramerEventClient, FrameCollectorDelegate, TransportEventClient {
+    public let transport: TCPTransport
     private let httpHandler = FoundationHTTPServerHandler()
     private let framer = WSFramer(isServer: true)
     private let frameHandler = FrameCollector()
@@ -137,7 +146,7 @@ public class ServerConnection: Connection, HTTPServerDelegate, FramerEventClient
             }
         case .cancelled:
             print("server connection cancelled!")
-            //broadcast(event: .cancelled)
+        //        broadcast(event: .cancelled)
         }
     }
     
@@ -147,10 +156,22 @@ public class ServerConnection: Connection, HTTPServerDelegate, FramerEventClient
         switch event {
         case .success(let headers):
             didUpgrade = true
-            let response = httpHandler.createResponse(headers: [:])
-            transport.write(data: response, completion: {_ in })
-            delegate?.didReceive(event: .connected(self, headers))
-            onEvent?(.connected(headers))
+            let Sec_WebSocket_Key = headers["Sec-WebSocket-Key"]
+            if let Sec_WebSocket_Key = Sec_WebSocket_Key {
+                
+                let key = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+                let Sec_WebSocket_Accept = "\(Sec_WebSocket_Key)\(key)".sha1Base64()
+                let res = ["Upgrade":"websocket","Connection":"Upgrade","Sec-WebSocket-Accept":"\(Sec_WebSocket_Accept)"]
+                let response = httpHandler.createResponse(headers: res)
+                transport.write(data: response, completion: {_ in })
+                delegate?.didReceive(event: .connected(self, headers))
+                onEvent?(.connected(headers))
+            }else{
+                let response = httpHandler.createResponse(headers: [:])
+                transport.write(data: response, completion: {_ in })
+                delegate?.didReceive(event: .connected(self, headers))
+                onEvent?(.connected(headers))
+            }
         case .failure(let error):
             onEvent?(.error(error))
         }
