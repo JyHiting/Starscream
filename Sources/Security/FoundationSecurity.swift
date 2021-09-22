@@ -88,7 +88,7 @@ extension FoundationSecurity: HeaderValidator {
     }
 }
 
-private extension String {
+public extension String {
     func sha1Base64() -> String {
         let data = self.data(using: .utf8)!
         let pointer = data.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) -> [UInt8] in
